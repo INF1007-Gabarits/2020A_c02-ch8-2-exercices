@@ -1,65 +1,21 @@
 [![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)](https://gitpod-redirect-0.herokuapp.com/)
 
-# Manettes et claviers (chapitre 8.1)
+# Fichiers WAV (chapitre 8.2)
 
 Avant de commencer. Consulter les instructions à suivre dans [instructions.md](instructions.md)
 
-## Appareils d'entrée/sortie 
+## Structure d'un fichier WAV
 
-Dans cette série d'exercices, nous utiliserons un clavier MIDI comme au chapitre 7.2, mais en sortie plutôt qu'en entrée. Nous utiliserons aussi une manette de jeu (de style Xbox) en entrée grâce à la librairie [inputs](https://pypi.org/project/inputs/).
+En audio numérique, la modulation d’impulsion codée (PCM en anglais) est une méthode utilisée pour représenter numériquement un signal analogique échantillonné. C’est ce qui est utilisé dans les ordinateurs, dans les CD audio et en téléphonie numérique. Dans un flux PCM, l’amplitude du signal analogique est enregistrée comme une valeur numérique à intervalles réguliers, c’est ce qu’on appelle l’échantillonnage. L’intervalle entre les échantillons est donné par la fréquence d’échantillonnage, qui est exprimée en Hz.
 
-## 1. Associations MIDI, notes et accords
+Un flux audio non compressé est donc composé d’une série d’échantillons de signal, et un fichier audio est typiquement composé d’un entête suivi d’un flux audio.
 
-Dans les exercices du chapitre 7.2, Nous avons vu généré un dictionnaire d'association entre des notes et des numéros MIDI, ainsi que des accords avec des notes. En réutilisant `build_note_dictionaries` du chap 7.2, nous allons maintenant charger ces éléments à partir d'un fichier JSON avec une structure particulière. Nous allons ensuite bâtir nos associations de notes MIDI grâce au contenu des dictionnaires.
+Dans la séance d'aujourd'hui, on utilise des fichiers WAVE dont le format des échantillons est un LPCM stéréo sur 16 bits à une fréquence de 44.1 kHz. Cela signifie que chaque échantillon contient en fait deux échantillons, un pour la gauche et un pour la droite, chacun allant de -32768 à 32767 (amplitude du signal) et qu’il y a 44 100 échantillons pour chaque seconde d’audio. C’est le format standard qui est utilisé dans les CD audio. Un fichier WAVE débute par un entête qui donne les caractéristiques du flux audio telles que la fréquence d’échantillonnage, le nombre de bit par échantillon, le nombre de canaux, etc.
 
-Au lieu d'avoir ceci dans le code:
-```python
-english_names = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
-solfeggio_names = ["Do", "Réb", "Ré", "Mib", "Mi", "Fa", "Fa#", "Sol", "Lab", "La", "Sib","Si"]
-chords = {
-	"Do majeur" : ("Do", "Mi", "Sol"),
-	"Fa majeur" : ("Fa", "La", "Do"),
-	"Sol majeur" : ("Sol", "Si", "Ré"),
-	"La mineur" : ("La", "Do", "Mi")
-}
-```
-Nous avons un JSON comme ceci:
-Exemple :
-```json
-{
-  "english_names": [ "C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" ],
-  "solfeggio_names": [ "Do", "Réb", "Ré", "Mib", "Mi", "Fa", "Fa#", "Sol", "Lab", "La", "Sib", "Si" ],
-  "chords": {
-    "Do majeur": [
-      "Do3",
-      "Mi3",
-      "Sol3"
-    ],
-    "Fa majeur": [
-      "Do3",
-      "Fa3",
-      "La3"
-    ],
-    "Sol majeur": [
-      "Si2",
-      "Ré3",
-      "Sol3"
-    ],
-    "La mineur": [
-      "Do3",
-      "Mi3",
-      "La3"
-    ]
-  }
-}
-```
+On va se servir du module [wave](https://docs.python.org/3/library/wave.html) pour faire la lecture et l'écriture des fichiers WAV.
 
-## 2. Configuration d'actions sur boutons de manettes
+Pour avoir une introduction plus détaillée sur l’échantillonnage et sur les fichiers WAVE, vous pouvez consulter Wikipédia (ou suivre ce que le chargé dit pendant le cours) :
 
-Il faut suivre la démonstration faite en classe. Voici les étapes :
+[Fichiers Wav](fr.wikipedia.org/wiki/WAVEform_audio_format)
 
-### 2.1. Structure d'un fichier INI
-
-### 2.2. Construire des callbacks à appeler sur des boutons
-
-### 2.3. Charger la configuration et exécuter un code
+[Échantillonnage PCM](fr.wikipedia.org/wiki/Modulation_d'impulsion_codée)
