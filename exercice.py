@@ -17,6 +17,13 @@ def merge_channels(channels):
 	# [c[0][0], c[1][0], c[2][0], c[0][1], c[1][1], c[2][1], ...] où c est l'agument channels
 	return [sample for samples in zip(*channels) for sample in samples]
 
+def separate_channels(samples, num_channels):
+	# Faire l'inverse de la fonction merge_channels
+	channels = []
+	for i in range(num_channels):
+		channels += samples[i::num_channels]
+	return channels
+
 def sine_gen(freq, amplitude, duration_seconds):
 	# Générer une onde sinusoïdale à partir de la fréquence et de l'amplitude donnée, sur le temps demandé et considérant le taux d'échantillonnage.
 	# Les échantillons sont des nombres réels entre -1 et 1.
@@ -45,6 +52,8 @@ def convert_to_samples(bytes):
 def main():
 	if not os.path.exists("output"):
 		os.mkdir("output")
+
+	print(separate_channels([[11, 12], [21, 22], [31, 32]], 3))
 
 	with wave.open("output/perfect_fifth.wav", "wb") as writer:
 		writer.setnchannels(2)
