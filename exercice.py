@@ -1,87 +1,66 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import mido
-import json
-import csv
 import os
-import time
-import configparser
-from copy import deepcopy
-
-import inputs
-import mido
+import wave
+import struct
+import math
 
 
+SAMPLING_FREQ = 44100 # Hertz, taux d'échantillonnage standard des CD
+SAMPLE_WIDTH = 16 # Échantillons de 16 bit
+MAX_SAMPLE_VALUE = 2**(SAMPLE_WIDTH-1) - 1
 
-NOTES_PER_OCTAVE = 12
 
+def merge_channels(channels):
+	# À partir de plusieurs listes d'échantillons (réels), les combiner de façon à ce que la liste retournée aie la forme :
+	# [c[0][0], c[1][0], c[2][0], c[0][1], c[1][1], c[2][1], ...] où c est l'agument channels
+	return [sample for samples in zip(*channels) for sample in samples]
 
-def build_note_dictionaries(note_names, add_octave_no=True):
-	C0_MIDI_NO = 12 # Plus basse note sur les pianos est La 0, mais on va commencer à générer les noms sur Do 0
+def sine_gen(freq, amplitude, duration_seconds):
+	# Générer une onde sinusoïdale à partir de la fréquence et de l'amplitude donnée, sur le temps demandé et considérant le taux d'échantillonnage.
+	# Les échantillons sont des nombres réels entre -1 et 1.
+	for i in range(int(duration_seconds * SAMPLING_FREQ)):
+		yield amplitude * math.sin(freq * (i / SAMPLING_FREQ * 2*math.pi))
 
-	midi_to_name = {}
-	name_to_midi = {}
-	# Pour chaque octave de 0 à 8 (inclus). On va générer tout l'octave 8, même si la dernière note du piano est Do 8
-	for octave in range(8+1):
-		# Pour chaque note de l'octave
-		for note in range(NOTES_PER_OCTAVE):
-			# Calculer le numéro MIDI de la note et ajouter aux deux dictionnaires
-			midi_no = C0_MIDI_NO + octave * NOTES_PER_OCTAVE + note
-			# Ajouter le numéro de l'octave au nom de la note si add_octave_no est vrai
-			full_note_name = note_names[note] + (str(octave) if add_octave_no else "")
-			midi_to_name[midi_no] = full_note_name
-			# Garder les numéros de notes dans name_to_midi entre 0 et 11 si add_octave_no est faux
-			name_to_midi[full_note_name] = midi_no if add_octave_no else midi_no % NOTES_PER_OCTAVE
-	return midi_to_name, name_to_midi
+def convert_to_bytes(samples):
+	# Convertir les échantillons en tableau de bytes en les convertissant en entiers 16 bits.
+	# Les échantillons en entrée sont entre -1 et 1, nous voulons les mettre entre -MAX_SAMPLE_VALUE et MAX_SAMPLE_VALUE
+	data = bytes()
+	for sample in samples:
+		data += struct.pack("h", int(MAX_SAMPLE_VALUE * sample))
+	#data = bytes([b for sample in samples for b in struct.pack("h", int(MAX_SAMPLE_VALUE * sample))])
+	return data
 
-def build_note_callbacks(note_name, name_to_midi, midi_outputs):
-	# Construire des callbacks pour bouton appuyé et relâché
-	return action_fn_pressed, action_fn_released
-
-def build_chord_callbacks(chord, chord_notes, name_to_midi, midi_outputs):
-	# Construire des callbacks pour bouton appuyé et relâché
-	return action_fn_pressed, action_fn_released
-
-def build_custom_action_callbacks(action_name, custom_actions, midi_outputs):
-	# Construire des callbacks pour bouton appuyé et relâché
-	return pressed, released
-
-def load_input_mappings(filename, name_to_midi, chord_notes, midi_outputs, custom_actions={}):
-	config = configparser.ConfigParser()
-	config.read(filename)
-	gamepad_section = config["gamepad"]
-
-	mappings = {}
-	for gamepad_input in gamepad_section:
-		action_name = gamepad_section[gamepad_input]
-		# Construire des callbacks pour l'action appropriée et l'ajouter au mapping.
-	return mappings
+def convert_to_samples(bytes):
+	# Faire l'opération inverse de convert_to_bytes, en convertissant des échantillons entier 16 bits en échantillons réels
+	samples = []
+	for i in range(0, len(bytes), 2):
+		sample_bytes = bytes[i:i+2]
+		samples.append(struct.unpack("h", sample_bytes)[0] / MAX_SAMPLE_VALUE)
+	#samples = [struct.unpack("h", sample_bytes)[0] / MAX_SAMPLE_VALUE for i in range(0, len(bytes), 2)]
+	return samples
 
 
 def main():
-	gamepad = inputs.devices.gamepads[0]
-	midi_outputs = (mido.open_output("UM-ONE 3"), mido.open_output("UnPortMIDI 4"))
-	midi_input = mido.open_input("UM-ONE 0")
+	if not os.path.exists("output"):
+		os.mkdir("output")
 
-	note_names = {} # Charger du JSON
-	midi_to_name, name_to_midi = build_note_dictionaries([]) # Charger du JSON
-	chords = {} # Charger du JSON
+	with wave.open("output/perfect_fifth.wav", "wb") as writer:
+		writer.setnchannels(2)
+		writer.setsampwidth(2)
+		writer.setframerate(SAMPLING_FREQ)
+		writer.setnframes(SAMPLING_FREQ*5)
 
-	def foo0(midi_outputs):
-		print("henlo")
-	def foo1(midi_outputs):
-		print("k bye")
-	custom_actions = {
-		"foo": {True: foo0, False: foo1}
-	}
+		# On générè un la3 (220 Hz) et un mi4 (intonnation juste, donc ratio de 3/2)
+		samples1 = [s for s in sine_gen(220, 0.4, 3.0)]
+		samples2 = [s for s in sine_gen(220 * (3/2), 0.3, 3.0)]
 
-	mappings = load_input_mappings("input.ini", name_to_midi, chords, midi_outputs, custom_actions)
+		# On met les samples dans des channels séparés (la à gauche, mi à droite)
+		merged = merge_channels([samples1, samples2])
+		data = convert_to_bytes(merged)
 
-	while True:
-		for e in gamepad.read():
-			if e.ev_type not in ("Sync") and e.code not in ("ABS_X", "ABS_Y","ABS_RX", "ABS_RY"):
-				print(e.ev_type, e.code, e.state)
+		writer.writeframes(data)
 
 if __name__ == "__main__":
 	main()
