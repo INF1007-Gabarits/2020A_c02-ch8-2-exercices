@@ -30,8 +30,6 @@
     <None Include="README.md" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="input.ini" />
-    <Content Include="notes.json" />
     <Content Include="settings/test_associations.json" />
   </ItemGroup>
   <ItemGroup>
