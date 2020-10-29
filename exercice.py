@@ -15,38 +15,20 @@ MAX_SAMPLE_VALUE = 2**(SAMPLE_WIDTH-1) - 1
 def merge_channels(channels):
 	# À partir de plusieurs listes d'échantillons (réels), les combiner de façon à ce que la liste retournée aie la forme :
 	# [c[0][0], c[1][0], c[2][0], c[0][1], c[1][1], c[2][1], ...] où c est l'agument channels
-	return [sample for samples in zip(*channels) for sample in samples]
 
 def separate_channels(samples, num_channels):
 	# Faire l'inverse de la fonction merge_channels
-	channels = []
-	for i in range(num_channels):
-		channels += samples[i::num_channels]
-	return channels
 
 def sine_gen(freq, amplitude, duration_seconds):
 	# Générer une onde sinusoïdale à partir de la fréquence et de l'amplitude donnée, sur le temps demandé et considérant le taux d'échantillonnage.
 	# Les échantillons sont des nombres réels entre -1 et 1.
-	for i in range(int(duration_seconds * SAMPLING_FREQ)):
-		yield amplitude * math.sin(freq * (i / SAMPLING_FREQ * 2*math.pi))
 
 def convert_to_bytes(samples):
 	# Convertir les échantillons en tableau de bytes en les convertissant en entiers 16 bits.
 	# Les échantillons en entrée sont entre -1 et 1, nous voulons les mettre entre -MAX_SAMPLE_VALUE et MAX_SAMPLE_VALUE
-	data = bytes()
-	for sample in samples:
-		data += struct.pack("h", int(MAX_SAMPLE_VALUE * sample))
-	#data = bytes([b for sample in samples for b in struct.pack("h", int(MAX_SAMPLE_VALUE * sample))])
-	return data
 
 def convert_to_samples(bytes):
 	# Faire l'opération inverse de convert_to_bytes, en convertissant des échantillons entier 16 bits en échantillons réels
-	samples = []
-	for i in range(0, len(bytes), 2):
-		sample_bytes = bytes[i:i+2]
-		samples.append(struct.unpack("h", sample_bytes)[0] / MAX_SAMPLE_VALUE)
-	#samples = [struct.unpack("h", sample_bytes)[0] / MAX_SAMPLE_VALUE for i in range(0, len(bytes), 2)]
-	return samples
 
 
 def main():
