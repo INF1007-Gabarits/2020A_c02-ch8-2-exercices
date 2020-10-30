@@ -1,139 +1,103 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import json
-import csv
 import os
-import time
-import configparser
-
-import inputs
-import mido
+import wave
+import struct
+import math
 
 
-NOTES_PER_OCTAVE = 12
-DEFAULT_VELOCITY = 80
+SAMPLING_FREQ = 44100 # Hertz, taux d'échantillonnage standard des CD
+SAMPLE_WIDTH = 16 # Échantillons de 16 bit
+MAX_SAMPLE_VALUE = 2**(SAMPLE_WIDTH-1) - 1
 
 
-def build_note_dictionaries(note_names, add_octave_no=True):
-	C0_MIDI_NO = 12 # Plus basse note sur les pianos est La 0, mais on va commencer à générer les noms sur Do 0
+def merge_channels(channels):
+	# À partir de plusieurs listes d'échantillons (réels), les combiner de façon à ce que la liste retournée aie la forme :
+	# [c[0][0], c[1][0], c[2][0], c[0][1], c[1][1], c[2][1], ...] où c est l'agument channels
+	return [sample for samples in zip(*channels) for sample in samples]
 
-	midi_to_name = {}
-	name_to_midi = {}
-	# Pour chaque octave de 0 à 8 (inclus). On va générer tout l'octave 8, même si la dernière note du piano est Do 8
-	for octave in range(8+1):
-		# Pour chaque note de l'octave
-		for note in range(NOTES_PER_OCTAVE):
-			# Calculer le numéro MIDI de la note et ajouter aux deux dictionnaires
-			midi_no = C0_MIDI_NO + octave * NOTES_PER_OCTAVE + note
-			# Ajouter le numéro de l'octave au nom de la note si add_octave_no est vrai
-			full_note_name = note_names[note] + (str(octave) if add_octave_no else "")
-			midi_to_name[midi_no] = full_note_name
-			# Garder les numéros de notes dans name_to_midi entre 0 et 11 si add_octave_no est faux
-			name_to_midi[full_note_name] = midi_no if add_octave_no else midi_no % NOTES_PER_OCTAVE
-	return midi_to_name, name_to_midi
+def separate_channels(samples, num_channels):
+	# Faire l'inverse de la fonction merge_channels
+	# Si on a en entrée [11, 21, 12, 22, 13, 23]
+	# Sur deux channels on obtiendrait :
+	# [
+	#   [11, 12, 13]
+	#   [21, 22, 23]
+	# ]
+	return [samples[i::num_channels] for i in range(num_channels)]
 
-def send_note_on(note_name, name_to_midi, midi_outputs):
-	msg = mido.Message("note_on", note=name_to_midi[note_name], velocity=DEFAULT_VELOCITY)
-	for o in midi_outputs:
-		o.send(msg)
+def sine_gen(freq, amplitude, duration_seconds):
+	# Générer une onde sinusoïdale à partir de la fréquence et de l'amplitude donnée, sur le temps demandé et considérant le taux d'échantillonnage.
+	# Les échantillons sont des nombres réels entre -1 et 1.
+	for i in range(int(SAMPLING_FREQ * duration_seconds)):
+		# Formule de la valeur y d'une onde sinusoïdale à l'angle x en fonction de sa fréquence F et de son amplitude A :
+		# y = A * sin(F * x), où x est en radian.
+		# Si on veut le x qui correspond au moment t, on peut dire que 2π représente une seconde, donc x = t * 2π,
+		# Or t est en secondes, donc t = i / nb_échantillons_par_secondes, où i est le numéro d'échantillon.
+		yield amplitude * math.sin(freq * (i / SAMPLING_FREQ * 2*math.pi))
 
-def send_note_off(note_name, name_to_midi, midi_outputs):
-	msg = mido.Message("note_off", note=name_to_midi[note_name])
-	for o in midi_outputs:
-		o.send(msg)
+def convert_to_bytes(samples):
+	# Convertir les échantillons en tableau de bytes en les convertissant en entiers 16 bits.
+	# Les échantillons en entrée sont entre -1 et 1, nous voulons les mettre entre -MAX_SAMPLE_VALUE et MAX_SAMPLE_VALUE
+	packer = struct.Struct("h")
+	data = bytes()
+	for sample in samples:
+		integer_sample = int(sample * MAX_SAMPLE_VALUE)
+		encoded_sample = packer.pack(integer_sample)
+		data += encoded_sample
+	return data
 
-def build_note_callbacks(note_name, name_to_midi, midi_outputs):
-	# Construire des callbacks pour bouton appuyé et relâché
-	def action_fn_pressed():
-		send_note_on(note_name, name_to_midi, midi_outputs)
-	def action_fn_released():
-		send_note_off(note_name, name_to_midi, midi_outputs)
-	return action_fn_pressed, action_fn_released
-
-def build_chord_callbacks(chord, chord_notes, name_to_midi, midi_outputs):
-	# Construire des callbacks pour bouton appuyé et relâché
-	def action_fn_pressed():
-		for note in chord_notes[chord]:
-			send_note_on(note, name_to_midi, midi_outputs)
-	def action_fn_released():
-		for note in chord_notes[chord]:
-			send_note_off(note, name_to_midi, midi_outputs)
-	return action_fn_pressed, action_fn_released
-
-def build_custom_action_callbacks(action_name, custom_actions, midi_outputs):
-	# Construire des callbacks pour bouton appuyé et relâché
-	pressed, released = None, None
-	if True in custom_actions[action_name] and custom_actions[action_name][True] is not None:
-		def action_fn_pressed():
-			custom_actions[action_name][True](midi_outputs)
-		pressed = action_fn_pressed
-	if False in custom_actions[action_name] and custom_actions[action_name][False] is not None:
-		def action_fn_released():
-			custom_actions[action_name][False](midi_outputs)
-		released = action_fn_released
-	return pressed, released
-
-def load_input_mappings(filename, name_to_midi, chord_notes, midi_outputs, custom_actions={}):
-	config = configparser.ConfigParser()
-	config.read(filename)
-	gamepad_section = config["gamepad"]
-
-	mappings = {}
-	for gamepad_input in gamepad_section:
-		action_name = gamepad_section[gamepad_input]
-		# Construire des callbacks pour l'action appropriée et l'ajouter au mapping.
-		pressed, released = None, None
-		if action_name in name_to_midi:
-			pressed, released = build_note_callbacks(action_name, name_to_midi, midi_outputs)
-		elif action_name in chord_notes:
-			pressed, released = build_chord_callbacks(action_name, chord_notes, name_to_midi, midi_outputs)
-		elif action_name in custom_actions:
-			pressed, released = build_custom_action_callbacks(action_name, custom_actions, midi_outputs)
-		mappings[gamepad_input] = {True: pressed, False: released}
-
-	return mappings
+def convert_to_samples(bytes):
+	# Faire l'opération inverse de convert_to_bytes, en convertissant des échantillons entier 16 bits en échantillons réels
+	unpacker = struct.Struct("h")
+	samples = []
+	for i in range(0, len(bytes), 2):
+		encoded_sample = bytes[i:i+2]
+		integer_sample = unpacker.unpack(encoded_sample)[0]
+		sample = integer_sample / MAX_SAMPLE_VALUE
+		samples.append(sample)
+	return samples
 
 
 def main():
-	gamepad = inputs.devices.gamepads[0]
-	midi_outputs = (mido.open_output("UM-ONE 3"), mido.open_output("UnPortMIDI 4"))
-	midi_input = mido.open_input("UM-ONE 0")
+	print([int(b) for b in struct.pack("h", 258)])
+	print(struct.unpack("hhh", bytes([2, 1, 42, 0, 0, 1])))
 
-	notes_data = json.load(open("notes.json", "r", encoding="utf-8"))
-	note_names = notes_data["solfeggio_names"]
-	midi_to_name, name_to_midi = build_note_dictionaries(note_names)
-	chords = notes_data["chords"]
+	print(merge_channels([[11, 12], [21, 22]]))
+	print(separate_channels([11, 12, 21, 22, 31, 32], 3))
 
-	def foo0(midi_outputs):
-		print("henlo")
-	def foo1(midi_outputs):
-		print("k bye")
-	def sustain_on(midi_outputs):
-		msg = mido.Message("control_change", channel=0, control=64, value=127)
-		for o in midi_outputs:
-			o.send(msg)
-	def sustain_off(midi_outputs):
-		msg = mido.Message("control_change", channel=0, control=64, value=0)
-		for o in midi_outputs:
-			o.send(msg)
+	if not os.path.exists("output"):
+		os.mkdir("output")
 
-	custom_actions = {
-		"foo": {True: foo0, False: foo1},
-		"sustain": {True: sustain_on, False: sustain_off}
-	}
+	with wave.open("output/perfect_fifth.wav", "wb") as writer:
+		writer.setnchannels(2)
+		writer.setsampwidth(2)
+		writer.setframerate(SAMPLING_FREQ)
 
-	mappings = load_input_mappings("input.ini", name_to_midi, chords, midi_outputs, custom_actions)
+		# On génére un la3 (220 Hz) et un mi4 (intonnation juste, donc ratio de 3/2)
+		samples1 = [s for s in sine_gen(220, 0.4, 3.0)]
+		samples2 = [s for s in sine_gen(220 * (3/2), 0.3, 3.0)]
 
-	while True:
-		for e in gamepad.read():
-			btn = e.code.lower()
-			pressed = bool(e.state)
-			if btn in mappings:
-				callbacks = mappings[btn]
-				if pressed in callbacks and callbacks[pressed] is not None:
-					mappings[btn][pressed]()
-				print(btn, pressed)
+		# On met les samples dans des channels séparés (la à gauche, mi à droite)
+		merged = merge_channels([samples1, samples2])
+		data = convert_to_bytes(merged)
+
+		writer.writeframes(data)
+
+	with wave.open("data/stravinsky.wav", "rb") as reader:
+		data = reader.readframes(int(reader.getnframes() * 0.2))
+		samples = convert_to_samples(data)
+		# On réduit le volume (on pourrait faire n'importe quoi avec les samples à ce stade.
+		samples = [s * 0.2 for s in samples]
+		data = convert_to_bytes(samples)
+		with wave.open("output/stravinsky_mod.wav", "wb") as writer:
+			writer.setnchannels(2)
+			writer.setsampwidth(2)
+			writer.setframerate(SAMPLING_FREQ)
+			writer.writeframes(data)
+
+
 
 if __name__ == "__main__":
 	main()
